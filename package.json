@@ -13,6 +13,7 @@
     "@radix-ui/react-dialog": "latest",
     "@radix-ui/react-dropdown-menu": "latest",
     "@radix-ui/react-slot": "latest",
+    "@supabase/supabase-js": "latest",
     "@tanstack/react-query": "latest",
     "class-variance-authority": "latest",
     "clsx": "latest",
