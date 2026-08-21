@@ -1,0 +1,84 @@
+name: Enable direct product image upload
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - .github/workflows/enable-product-image-upload.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch product editor with Supabase image upload
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('src/AppSupabase.tsx')
+          text = path.read_text()
+
+          if 'Direct image upload' in text:
+              print('Image upload already enabled.')
+              raise SystemExit(0)
+
+          start = text.index('function ProductModal(')
+          end = text.index('\n\nfunction OrdersAdmin', start)
+
+          replacement = r'''function ProductModal({product,categories,onClose,onSave}:{product:ProductRow;categories:{id:string;name:string}[];onClose:()=>void;onSave:(p:ProductRow)=>void}){
+  const [draft,setDraft]=useState(product);
+  const [uploading,setUploading]=useState(false);
+  const [preview,setPreview]=useState(product.image_url??null);
+  const [uploadError,setUploadError]=useState('');
+  const set=<K extends keyof ProductRow>(k:K,v:ProductRow[K])=>setDraft(d=>({...d,[k]:v}));
+
+  const uploadImage=async(file:File)=>{
+    setUploadError('');
+    if(!file.type.startsWith('image/')){setUploadError('Please choose an image file.');return;}
+    if(file.size>10*1024*1024){setUploadError('Image must be 10 MB or smaller.');return;}
+    setUploading(true);
+    try{
+      const ext=file.name.split('.').pop()?.toLowerCase()||'jpg';
+      const path=`products/${crypto.randomUUID()}.${ext}`;
+      const {error}=await supabase.storage.from('product-images').upload(path,file,{upsert:false,cacheControl:'3600',contentType:file.type});
+      if(error)throw error;
+      const {data}=supabase.storage.from('product-images').getPublicUrl(path);
+      set('image_url',data.publicUrl);
+      setPreview(data.publicUrl);
+      toast.success('Product image uploaded');
+    }catch(err){setUploadError(err instanceof Error?err.message:'Image upload failed');}
+    finally{setUploading(false);}
+  };
+
+  return <div className="modal-backdrop"><div className="modal"><div className="modal-head"><div><span className="admin-kicker">Product editor</span><h2>{draft.name}</h2></div><button className="icon-btn" onClick={onClose}><X size={20}/></button></div><div className="form-grid">
+    <div className="full" style={{display:'grid',gap:10}}>
+      <span style={{fontSize:'.72rem',fontWeight:600}}>Product image</span>
+      <label style={{display:'grid',placeItems:'center',gap:8,minHeight:190,padding:18,border:'1px dashed #cfc5c8',borderRadius:16,cursor:'pointer',background:'#faf7f7'}}>
+        <input type="file" accept="image/*" style={{display:'none'}} onChange={e=>{const file=e.target.files?.[0];if(file)uploadImage(file);e.currentTarget.value='';}}/>
+        {preview?<img src={preview} alt={draft.name} style={{width:'100%',maxHeight:230,objectFit:'cover',borderRadius:12}}/>:<div style={{textAlign:'center',color:'#8a7e82'}}><strong style={{display:'block',color:'#2b2326',marginBottom:5}}>Choose product image</strong><span>Tap to upload directly from your phone or computer</span><small style={{display:'block',marginTop:6}}>JPG, PNG, WEBP · up to 10 MB</small></div>}
+        {uploading?<strong style={{fontSize:'.75rem'}}>Uploading image…</strong>:preview?<span style={{fontSize:'.72rem',color:'#6d5c61'}}>Tap the image to replace it</span>:null}
+      </label>
+      {uploadError?<span style={{fontSize:'.72rem',color:'#a33b3b'}}>{uploadError}</span>:null}
+    </div>
+    <label>Name<input value={draft.name} onChange={e=>set('name',e.target.value)}/></label><label>SKU<input value={draft.sku} onChange={e=>set('sku',e.target.value)}/></label><label>Category<select value={draft.category_id??''} onChange={e=>set('category_id',e.target.value||null)}><option value="">Uncategorised</option>{categories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Slug<input value={draft.slug} onChange={e=>set('slug',e.target.value)}/></label><label>Price<input type="number" min="0" value={draft.price} onChange={e=>set('price',Number(e.target.value))}/></label><label>Compare-at<input type="number" min="0" value={draft.compare_at_price??''} onChange={e=>set('compare_at_price',e.target.value?Number(e.target.value):null)}/></label><label>Stock<input type="number" min="0" value={draft.stock} onChange={e=>set('stock',Number(e.target.value))}/></label><label>Status<select value={draft.status} onChange={e=>set('status',e.target.value)}><option>active</option><option>draft</option><option>archived</option></select></label><label>Fabric<input value={draft.fabric??''} onChange={e=>set('fabric',e.target.value)}/></label><label>Colour<input value={draft.color??''} onChange={e=>set('color',e.target.value)}/></label><label className="full">Image URL<input value={draft.image_url??''} onChange={e=>{set('image_url',e.target.value||null);setPreview(e.target.value||null)}} placeholder="Or paste an image URL"/></label><label className="full">Description<textarea rows={4} value={draft.description??''} onChange={e=>set('description',e.target.value)}/></label><label className="toggle full"><input type="checkbox" checked={draft.is_featured} onChange={e=>set('is_featured',e.target.checked)}/><span>Feature this product on the homepage</span></label>
+  </div><div className="modal-actions"><button className="button button-muted" onClick={onClose}>Cancel</button><button className="button button-dark" disabled={uploading} onClick={()=>onSave({...draft,slug:draft.slug||draft.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'')})}>{uploading?'Uploading…':'Save changes'}</button></div></div></div>
+}'''
+
+          path.write_text(text[:start] + replacement + text[end:])
+          print('Product editor patched.')
+          PY
+
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/AppSupabase.tsx
+          git diff --cached --quiet && exit 0
+          git commit -m "feat: direct product image upload"
+          git push
