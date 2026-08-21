@@ -52,6 +52,7 @@ export async function getOwnerProfile() {
 export async function signInWithPassword(email: string, password: string) {
   const result = await supabase.auth.signInWithPassword({ email, password });
   if (result.error) throw result.error;
+  window.location.reload();
   return result.data;
 }
 
